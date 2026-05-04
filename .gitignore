@@ -1,0 +1,51 @@
+# Environment variables - NEVER commit these
+.env
+.env.local
+.env.production
+.env.*
+
+# DocuSign private key - NEVER commit
+keys/
+*.key
+*.pem
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Exports (generated IIF files - operator-specific)
+exports/
+
+# Downloads (envelope documents)
+downloads/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Railway / Docker
+.railway/
