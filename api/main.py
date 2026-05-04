@@ -86,5 +86,12 @@ async def docx_ui_page(request: Request):
 # Root
 # ------------------------------------------------------------------
 @app.get("/", tags=["Root"])
-async def root(request: Request):
-    return templates.TemplateResponse("docx_ui.html", {"request": request})
+async def root():
+    return {
+        "service": "AP Real Estate Automation System",
+        "version": "1.0.0",
+        "brand": "Datawebify",
+        "docs": "/docs",
+        "health": "/metrics/health",
+        "status": "online"
+    }
