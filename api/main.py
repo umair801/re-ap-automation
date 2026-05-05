@@ -10,6 +10,7 @@ from api.approval_router import router as approval_router
 from api.metrics_router import router as metrics_router
 from api.docusign_router import router as docusign_router
 from api.iif_router import router as iif_router
+from api.slack_router import router as slack_router
 from api.extraction_router import router as extraction_router
 from api.order_router import router as order_router
 from api.docx_router import router as docx_router
@@ -65,6 +66,7 @@ app.include_router(approval_router)
 app.include_router(metrics_router)
 app.include_router(docusign_router)
 app.include_router(iif_router)
+app.include_router(slack_router)
 app.include_router(extraction_router)
 app.include_router(order_router)
 app.include_router(docx_router)
