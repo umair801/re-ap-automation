@@ -15,6 +15,7 @@ from api.extraction_router import router as extraction_router
 from api.order_router import router as order_router
 from api.docx_router import router as docx_router
 from core.config import get_settings
+from core.scheduler import start_scheduler, stop_scheduler
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 
@@ -30,7 +31,9 @@ async def lifespan(app: FastAPI):
         brand="Datawebify",
         version="1.0.0",
     )
+    start_scheduler()
     yield
+    stop_scheduler()
     logger.info("ap_ai_shutdown")
 
 
