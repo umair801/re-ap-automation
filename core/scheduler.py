@@ -124,6 +124,87 @@ async def job_check_pending_approvals():
 # Runs every day at 06:00 UTC (operator morning routine)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Job: Daily Positive Pay file generation
+# Runs every day at 06:30 UTC (after IIF generation)
+# ---------------------------------------------------------------------------
+
+async def job_daily_positive_pay():
+    """
+    Generate Positive Pay check register files for all entities.
+    Sends to exports/positive_pay/{entity_name}/YYYY-MM-DD.csv
+    Operator uploads to bank portal each morning.
+    """
+    try:
+        from integrations.airtable_client import get_airtable_client
+        from integrations.positive_pay import (
+            get_positive_pay_generator, PositivePayBatch, CheckRecord
+        )
+        from decimal import Decimal
+        from datetime import date
+
+        airtable = get_airtable_client()
+        generator = get_positive_pay_generator()
+        today = date.today()
+
+        # Get all approved bills synced today (these generated checks)
+        formula = (
+            f"AND({{Approval_Status}}='Approved', "
+            f"{{QB_Sync_Status}}='Synced')"
+        )
+        records = airtable._table("Bills").all(formula=formula)
+
+        if not records:
+            logger.info("Positive Pay: No synced bills today.")
+            return
+
+        # Group by entity
+        by_entity: dict[str, list] = {}
+        for record in records:
+            entity = record["fields"].get("Entity_Name", "Unknown")
+            if entity not in by_entity:
+                by_entity[entity] = []
+            by_entity[entity].append(record)
+
+        generated = []
+        for entity_name, bills in by_entity.items():
+            checks = []
+            for i, record in enumerate(bills):
+                fields = record["fields"]
+                check_num = fields.get("Check_Number", f"AUTO{i+1:04d}")
+                amount = Decimal(str(fields.get("Total_Amount", 0)))
+                vendor = fields.get("Vendor_Name", "Unknown")
+                invoice = fields.get("Invoice_Number", "")
+
+                checks.append(CheckRecord(
+                    check_number=check_num,
+                    amount=amount,
+                    payee_name=vendor,
+                    issue_date=today,
+                    account_number=fields.get("Bank_Account", ""),
+                    routing_number=fields.get("Routing_Number", ""),
+                    memo=invoice,
+                ))
+
+            batch = PositivePayBatch(
+                entity_name=entity_name,
+                bank_name="",
+                account_number=checks[0].account_number if checks else "",
+                routing_number=checks[0].routing_number if checks else "",
+                generation_date=today,
+                checks=checks,
+            )
+            path = generator.generate(batch)
+            if path:
+                generated.append(path)
+                logger.info(f"Positive Pay generated for {entity_name}: {path}")
+
+        logger.info(f"Daily Positive Pay: {len(generated)} files generated.")
+
+    except Exception as e:
+        logger.error(f"job_daily_positive_pay failed: {e}")
+
+
 async def job_daily_iif_generation():
     """
     Generate IIF files for all active entities with approved pending bills.
@@ -351,6 +432,16 @@ def start_scheduler():
         trigger=CronTrigger(hour=6, minute=0),
         id="daily_iif_generation",
         name="Daily IIF File Generation",
+        replace_existing=True,
+        misfire_grace_time=600,
+    )
+
+    # Daily Positive Pay — 06:30 UTC (after IIF)
+    scheduler.add_job(
+        job_daily_positive_pay,
+        trigger=CronTrigger(hour=6, minute=30),
+        id="daily_positive_pay",
+        name="Daily Positive Pay File Generation",
         replace_existing=True,
         misfire_grace_time=600,
     )
