@@ -91,42 +91,128 @@ async def docusign_webhook(
 
 
 # ---------------------------------------------------------------------------
-# Internal handlers (stubs — wired to compliance agent in GAP 3)
+# Internal handlers - wired to compliance agent
 # ---------------------------------------------------------------------------
 
 async def _handle_completed(envelope_id: str, payload: dict):
     """
-    Envelope completed: all parties have signed.
-    GAP 3 (compliance_agent) will call document download and verification here.
+    Envelope completed: all parties signed.
+    Downloads documents, runs name consistency check, updates Airtable.
     """
-    logger.info(
-        f"Envelope COMPLETED: {envelope_id}. "
-        f"Queuing compliance document download and verification."
-    )
-    # TODO (GAP 3): call compliance_agent.process_completed_envelope(envelope_id)
+    from agents.compliance_agent import get_compliance_agent
+    from integrations.slack_client import post_notification
+    from integrations.airtable_client import get_airtable_client
+
+    logger.info(f"Envelope COMPLETED: {envelope_id}. Starting document processing.")
+
+    try:
+        agent = get_compliance_agent()
+        result = agent.process_completed_envelope(envelope_id)
+
+        if result.get("success"):
+            # Find bill linked to this envelope and re-run compliance check
+            airtable = get_airtable_client()
+            formula = f"{{DocuSign_Envelope_ID}}='{envelope_id}'"
+            bills = airtable._table("Bills").all(formula=formula)
+
+            for bill_record in bills:
+                bill_id = bill_record["id"]
+                compliance_result = agent.check_bill_compliance(bill_id)
+
+                if compliance_result.get("can_proceed"):
+                    post_notification(
+                        f"✅ Compliance documents received and verified for envelope "
+                        f"`{envelope_id}`. "
+                        f"Bill `{bill_id}` is now ready for cost coding and approval."
+                    )
+                    logger.info(f"Bill {bill_id} now compliant after envelope {envelope_id} completed.")
+                else:
+                    post_notification(
+                        f"⚠️ Envelope `{envelope_id}` completed but compliance check failed: "
+                        f"{compliance_result.get('note')}"
+                    )
+        else:
+            logger.error(f"Document download failed for envelope {envelope_id}: {result.get('error')}")
+            post_notification(
+                f"❌ Failed to download documents for completed envelope `{envelope_id}`. "
+                f"Error: {result.get('error', 'Unknown')}. Manual review required."
+            )
+
+    except Exception as e:
+        logger.error(f"Error processing completed envelope {envelope_id}: {e}")
 
 
 async def _handle_declined(envelope_id: str, payload: dict):
     """
     Envelope declined by vendor.
-    If vendor declined the Master Insurance Policy, flag as Refused Compliance in Airtable.
+    Notifies operator and flags if Master Policy was refused.
     """
-    logger.warning(
-        f"Envelope DECLINED: {envelope_id}. "
-        f"Operator must review and flag vendor if Master Policy was refused."
-    )
-    # TODO (GAP 3): call compliance_agent.handle_declined_envelope(envelope_id)
+    from agents.compliance_agent import get_compliance_agent
+    from integrations.slack_client import post_notification
+    from integrations.airtable_client import get_airtable_client
+
+    logger.warning(f"Envelope DECLINED: {envelope_id}.")
+
+    try:
+        agent = get_compliance_agent()
+        agent.handle_declined_envelope(envelope_id)
+
+        # Find linked bills and update status
+        airtable = get_airtable_client()
+        formula = f"{{DocuSign_Envelope_ID}}='{envelope_id}'"
+        bills = airtable._table("Bills").all(formula=formula)
+
+        bill_ids = [b["id"] for b in bills]
+        for bill_id in bill_ids:
+            airtable.update_bill_compliance_status(
+                bill_id,
+                "Blocked",
+                f"Vendor declined DocuSign envelope {envelope_id}. Manual follow-up required."
+            )
+
+        post_notification(
+            f"🚫 Vendor declined compliance envelope `{envelope_id}`. "
+            f"Affected bills: {', '.join(f'`{b}`' for b in bill_ids) or 'none found'}. "
+            f"If vendor refused Master Insurance Policy, mark as Refused Compliance in Airtable."
+        )
+
+    except Exception as e:
+        logger.error(f"Error handling declined envelope {envelope_id}: {e}")
 
 
 async def _handle_voided(envelope_id: str, payload: dict):
     """
-    Envelope voided (expired or manually voided).
+    Envelope voided or expired.
+    Updates bill status and notifies operator to re-send.
     """
-    logger.warning(
-        f"Envelope VOIDED: {envelope_id}. "
-        f"Vendor compliance paused. Bill remains blocked until new envelope is sent."
-    )
-    # TODO (GAP 3): call compliance_agent.handle_voided_envelope(envelope_id)
+    from agents.compliance_agent import get_compliance_agent
+    from integrations.slack_client import post_notification
+    from integrations.airtable_client import get_airtable_client
+
+    logger.warning(f"Envelope VOIDED: {envelope_id}.")
+
+    try:
+        agent = get_compliance_agent()
+        agent.handle_voided_envelope(envelope_id)
+
+        airtable = get_airtable_client()
+        formula = f"{{DocuSign_Envelope_ID}}='{envelope_id}'"
+        bills = airtable._table("Bills").all(formula=formula)
+
+        for bill_record in bills:
+            airtable.update_bill_compliance_status(
+                bill_record["id"],
+                "Awaiting Docs",
+                f"Envelope {envelope_id} expired or voided after 30 days. New envelope required."
+            )
+
+        post_notification(
+            f"⏰ Compliance envelope `{envelope_id}` has expired or been voided. "
+            f"A new envelope must be sent to the vendor before this bill can proceed."
+        )
+
+    except Exception as e:
+        logger.error(f"Error handling voided envelope {envelope_id}: {e}")
 
 
 # ---------------------------------------------------------------------------
